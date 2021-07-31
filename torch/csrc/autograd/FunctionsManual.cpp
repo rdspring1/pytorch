@@ -3050,7 +3050,7 @@ Tensor sum_inner(const Tensor& to_sum, int axis, bool keepdim=true) {
   return r;
 }
 
-// Helper for batchnorm_double_backward
+// Helper for layer_norm_double_backward
 // sum across batch size (outer dimensions)
 Tensor sum_outer(const Tensor& to_sum, int axis, bool keepdim=true) {
   auto r = to_sum;
@@ -3061,11 +3061,11 @@ Tensor sum_outer(const Tensor& to_sum, int axis, bool keepdim=true) {
 }
 
 // Helper for batchnorm_double_backward
-// sum across normalized_shape (inner dimensions)
+// unsqueeze across normalized_shape (inner dimensions)
 Tensor unsqueeze_inner(const Tensor& src, int ndim) {
   auto src_expanded = src;
   while (src_expanded.sizes().size() < ndim) {
-    src_expanded = src_expanded.unsqueeze(1);
+    src_expanded = src_expanded.unsqueeze(-1);
   }
   return src_expanded;
 }
@@ -3077,8 +3077,8 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> layer_norm_double_backward(
     const Tensor& ggG,
     const Tensor& ggB,
     const Tensor& gO,
-    const c10::optional<Tensor>& save_mean,
-    const c10::optional<Tensor>& save_invstd,
+    const Tensor& save_mean,
+    const Tensor& save_invstd,
     IntArrayRef normalized_shape,
     std::array<bool, 4> output_mask) {
 
@@ -3134,14 +3134,15 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> layer_norm_double_backward(
   // add contribution of gamma term to gI
   Tensor gI_G_term;
   if (affine && ggG.defined()) {
-    auto t0 = gO * sigma2_eps_neg_1_2;
-    auto t1 = (sigma2_eps_neg_1_2 * gO_sum).div_(-N);
-    auto t2 = (input_mu_sigma2_neg_3_2 * sum_exclude_dim1(gO * input_sub_mu)).div_(-N);
-    gI_G_term = ggG_expanded * (t0.add_(t1).add_(t2));
+    auto ggG_gO = ggG_expanded * gO;
+    auto t0 = ggG_gO * sigma2_eps_neg_1_2;
+    auto t1 = (sigma2_eps_neg_1_2 * sum_inner(ggG_gO, axis)).div_(N);
+    auto t2 = (input_mu_sigma2_neg_3_2 * sum_inner(ggG_gO * input_sub_mu, axis)).div_(N);
+    auto gI_G_term = (t0.sub_(t1).sub_(t2));
     gI = gI.defined() ? gI.add_(gI_G_term) : gI_G_term;
   }
 
-  // this is the grad_input for the first backward function
+  // this is the grad_input gradient for the first backward function
   auto first_bwd_fn_grad_input = [&](const Tensor& gO, const Tensor& gamma) -> Tensor {
     auto h0 = (gamma * sigma2_eps_neg_1_2).div_(N);
     auto h1 = (N * gO).sub_(sum_inner(gO, axis)).sub_(
@@ -3153,8 +3154,8 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> layer_norm_double_backward(
   Tensor gG;
   if (affine && ggI.defined()) {
     // gG is the first backward fn with the gamma term removed (then shaped properly)
-    gG = ggI * first_bwd_fn_grad_input(gO, at::ones({}, sigma2_eps_neg_1_2.options()));
-    gG = sum_outer(gG, axis, false);
+    gG = first_bwd_fn_grad_input(ggI, at::ones({}, sigma2_eps_neg_1_2.options()));
+    gG = sum_outer(gO * gG, axis, false);
   }
 
   // calculate ggO
