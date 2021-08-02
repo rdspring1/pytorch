@@ -3117,18 +3117,22 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> layer_norm_double_backward(
   Tensor gI;
   // calculate gI
   auto input_mu_sigma2_neg_3_2 = input_sub_mu * sigma2_eps_neg_3_2;
-  auto gOinmu_sum = sum_inner(gO * input_sub_mu, axis);
-  auto gO_sum = sum_inner(gO, axis);
 
   if (ggI.defined()) {
+    auto gxhat = gO * gamma_expanded;
+    auto gxhat_mu_sum = sum_inner(gxhat * input_sub_mu, axis);
+    auto gxhat_sum = sum_inner(gxhat, axis);
+
     auto ggI_sum = sum_inner(ggI, axis);
-    auto ggIinmu_sum = sum_inner(ggI * input_sub_mu, axis);
-    auto all_sub = ((ggI_sum * gO_sum).div_(N)).sub_(sum_inner(gO * ggI, axis)).add_(
-                    (sigma2_eps_neg_1 * gOinmu_sum * ggIinmu_sum).mul_(3. / N));
+    auto ggI_mu_sum = sum_inner(ggI * input_sub_mu, axis);
+
+    auto all_sub = ((ggI_sum * gxhat_sum).div_(N)).sub_(sum_inner(ggI * gxhat, axis)).add_(
+                    (sigma2_eps_neg_1 * gxhat_mu_sum * ggI_mu_sum).mul_(3. / N));
     auto gI_0t = (input_mu_sigma2_neg_3_2 * all_sub).div_(N);
-    auto gI_1t = (ggIinmu_sum * sigma2_eps_neg_3_2).div_(N) * (gO_sum.div(N) - gO);
-    auto gI_2t = (gOinmu_sum * sigma2_eps_neg_3_2).div_(N) * (ggI_sum.div(N) - ggI);
-    gI = gamma_expanded * (gI_0t.add_(gI_1t).add_(gI_2t));
+    auto gI_1t = (ggI_mu_sum * sigma2_eps_neg_3_2).div_(N) * (gxhat_sum.div(N) - gxhat);
+    auto gI_2t = (gxhat_mu_sum * sigma2_eps_neg_3_2).div_(N) * (ggI_sum.div(N) - ggI);
+
+    gI = (gI_0t.add_(gI_1t).add_(gI_2t));
   }
 
   // add contribution of gamma term to gI
