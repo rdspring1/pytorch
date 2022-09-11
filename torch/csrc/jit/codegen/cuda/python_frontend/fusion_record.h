@@ -429,4 +429,28 @@ struct VarianceMeanOpRecord : RecordFunctor {
   bool keepdim_;
 };
 
+TORCH_CUDA_CU_API TensorView* permute(
+    TensorView* x,
+    const std::vector<int64_t>& new2old);
+
+struct PermuteOpRecord : RecordFunctor {
+  PermuteOpRecord(
+      std::vector<size_t> _args,
+      std::vector<size_t> _outputs,
+      std::vector<int64_t>& new2old)
+      : RecordFunctor(std::move(_args), std::move(_outputs)),
+        new2old_(new2old) {}
+  virtual ~PermuteOpRecord() = default;
+
+  void operator()(FusionDefinition& fd) final {
+    auto arg = fd.getFusionState(args.at(0))->as<NvfTensorView>();
+    auto output = torch::jit::fuser::cuda::permute(arg, new2old_);
+    fd.setFusionState(outputs.at(0), output);
+  }
+
+ private:
+  //! The permute dimensions are mapped from new to old positions.
+  std::vector<int64_t> new2old_;
+};
+
 } // namespace nvfuser

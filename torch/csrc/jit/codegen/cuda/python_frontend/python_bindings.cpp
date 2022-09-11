@@ -968,6 +968,18 @@ void initNvFuserPythonBindings(PyObject* module) {
       py::return_value_policy::reference);
 
   nvf_ops.def(
+      "permute",
+      [](nvfuser::FusionDefinition::Operators& self,
+         nvfuser::Tensor* arg,
+         std::vector<int64_t>& new2old) -> decltype(auto) {
+        nvfuser::Tensor* output = self.fusion_definition->defineTensor();
+        self.fusion_definition->defineRecord(new nvfuser::PermuteOpRecord(
+            {arg->index}, {output->index}, new2old));
+        return output;
+      },
+      py::return_value_policy::reference);
+
+  nvf_ops.def(
       "broadcast_in_dim",
       [](nvfuser::FusionDefinition::Operators& self,
          nvfuser::Tensor* arg,

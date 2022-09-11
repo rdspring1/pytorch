@@ -230,6 +230,15 @@ class TorchRefsNvfuserCapabilityMode(TorchRefsMode):
             and "aten.var_mean" in str(func)
         )
 
+    def _is_permute(self, func):
+        return "torch.permute" == torch.overrides.resolve_name(func) or (
+            (
+                isinstance(func, torch._ops.OpOverload)
+                or isinstance(func, torch._ops.OpOverloadPacket)
+            )
+            and "aten.permute" in str(func)
+        )
+
     def __torch_function__(
         self,
         orig_func: Callable,
@@ -242,5 +251,7 @@ class TorchRefsNvfuserCapabilityMode(TorchRefsMode):
         # First we intercept calls for nvfuser-specific prims bypassing generic torch._refs
         if self._is_var_mean(orig_func):
             return torch.ops.nvprims.var_mean(*args, **kwargs)
+        if self._is_permute(orig_func):
+            return torch.ops.nvprims.permute(*args, **kwargs)
         # Then we use TorchRefsMode to interpret the rest
         return super().__torch_function__(orig_func, types, args, kwargs)

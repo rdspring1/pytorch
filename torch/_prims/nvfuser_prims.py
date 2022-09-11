@@ -271,6 +271,14 @@ def _var_mean_nvfuser(
     return fd.ops.var_mean(a, dims, correction, keepdim)
 
 
+def _permute_nvfuser(
+    fd: Any,
+    a: TensorLikeType,
+    dims: DimsSequenceType,
+):
+    return fd.ops.permute(a, dims)
+
+
 def _amax_nvfuser(
     fd: Any,
     a: TensorLikeType,
@@ -289,15 +297,60 @@ def _amin_nvfuser(
     return fd.ops.min(a, dims, keep_dims)
 
 
-_nvfuser_impls["broadcast_in_dim"] = _broadcast_in_dim_nvfuser
-_nvfuser_impls["convert_element_type"] = _convert_element_type_nvfuser
-_nvfuser_impls["squeeze"] = _squeeze_nvfuser
-_nvfuser_impls["view_of"] = _view_of_nvfuser
-_nvfuser_impls["sum"] = _sum_nvfuser
-_nvfuser_impls["var"] = _var_nvfuser
-_nvfuser_impls["var_mean"] = _var_mean_nvfuser
 _nvfuser_impls["amax"] = _amax_nvfuser
 _nvfuser_impls["amin"] = _amin_nvfuser
+_nvfuser_impls["broadcast_in_dim"] = _broadcast_in_dim_nvfuser
+_nvfuser_impls["convert_element_type"] = _convert_element_type_nvfuser
+_nvfuser_impls["permute"] = _permute_nvfuser
+_nvfuser_impls["squeeze"] = _squeeze_nvfuser
+_nvfuser_impls["sum"] = _sum_nvfuser
+_nvfuser_impls["view_of"] = _view_of_nvfuser
+_nvfuser_impls["var"] = _var_nvfuser
+_nvfuser_impls["var_mean"] = _var_mean_nvfuser
+
+
+def register_permute():
+    """This function is used to register the permute function in torch.ops.nvprims module."""
+    prim_packet = torch.ops.nvprims.permute
+    prim = prim_packet.main
+    name = "permute.main"
+
+    # 1) define signature
+    nvprim.define("permute(Tensor(a) self, int[] dims) -> Tensor(a)")
+
+    # 2) This function is used for device="meta" Tensors.
+    def _meta_var_mean(inp: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
+        return torch._prims._transpose_meta(inp, dims)
+
+    nvprim_meta_impl.impl(name, _meta_var_mean)
+
+    # 3) This function is used under _AutoDispatchBelowAutograd context
+    def _prim_impl(inp: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
+        return torch.permute(inp, dims)
+
+    nvprim_impl.impl(name, _prim_impl)
+
+    # 4) Create reference
+    def _permute_ref(a: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
+        return prim(a, dims)
+
+    # 5) Autograd
+    def _permute_autograd(a: TensorLikeType, dims: DimsSequenceType):
+        # This wrapper is needed to convert prims calls inside
+        # elementwise_type_promotion_wrapper to nvprims calls
+        from torch._prims.context import NvfuserPrimsMode
+
+        with NvfuserPrimsMode():
+            return backwards_not_supported(_permute_ref)(a, dims)
+
+    nvprim_autograd_impl.impl(name, _permute_autograd)
+
+    for p in (prim_packet, prim):
+        p.__doc__ = (
+            "Returns a view of the original tensor input with its dimensions permuted."
+        )
+        p.impl_nvfuser = _nvfuser_impls["permute"]
+        p.return_type = torch._prims_common.RETURN_TYPE.NEW  # type: ignore[attr-defined]
 
 
 def register_var_mean():
