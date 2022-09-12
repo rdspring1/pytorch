@@ -16972,15 +16972,6 @@ python_ref_db = [
         supports_nvfuser=False,
     ),
     PythonRefInfo(
-        "ops.nvprims.permute",
-        torch_opinfo_name="permute",
-        validate_view_consistency=False,
-        # This function is expected not to work with TorchRefsMode(strict=True)
-        decorators=(
-            DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_python_ref',),
-        ),
-    ),
-    PythonRefInfo(
         "_refs.ravel",
         torch_opinfo_name="ravel",
         supports_nvfuser=False,

@@ -516,29 +516,6 @@ class TestPrims(TestCase):
 
     @onlyCUDA
     @skipCUDAIfRocm
-    @dtypes(torch.float16, torch.float32)
-    def test_permute(self, device, dtype):
-        from torch.fx.experimental.proxy_tensor import make_fx
-        from torch._prims.context import TorchRefsNvfuserCapabilityMode
-
-
-        def _wrapper(a):
-            return torch.permute(a, dims=[2, 0, 1])
-
-        make_arg = partial(make_tensor, device=device, dtype=dtype)
-
-        with TorchRefsNvfuserCapabilityMode():
-            gm = make_fx(_wrapper)(make_arg((2, 3, 5)))
-
-        call_function_nodes = list(filter(lambda n: n.op == "call_function", gm.graph.nodes))
-        includes_nvprims_permute = any(
-            torch.ops.nvprims.permute.main == node.target
-            for node in call_function_nodes
-        )
-        self.assertTrue(includes_nvprims_permute)
-
-    @onlyCUDA
-    @skipCUDAIfRocm
     @dtypes(torch.float32, torch.float16)
     def test_cpu_tensor(self, device, dtype):
         from torch.fx.experimental.proxy_tensor import make_fx
