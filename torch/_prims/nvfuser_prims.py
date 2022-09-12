@@ -311,12 +311,16 @@ _nvfuser_impls["var_mean"] = _var_mean_nvfuser
 
 def register_permute():
     """This function is used to register the permute function in torch.ops.nvprims module."""
-    prim_packet = torch.ops.nvprims.permute
-    prim = prim_packet.main
     name = "permute.main"
 
-    # 1) define signature
+    # 1) define signature and prim
     nvprim.define("permute(Tensor(a) self, int[] dims) -> Tensor(a)")
+    prim = torch.ops.nvprims.permute
+    prim.__doc__ = (
+        "Returns a view of the original tensor input with its dimensions permuted."
+    )
+    prim.impl_nvfuser = _nvfuser_impls["permute"]
+    prim.return_type = torch._prims_common.RETURN_TYPE.NEW  # type: ignore[attr-defined]
 
     # 2) This function is used for device="meta" Tensors.
     def _meta_var_mean(inp: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
@@ -344,13 +348,6 @@ def register_permute():
             return backwards_not_supported(_permute_ref)(a, dims)
 
     nvprim_autograd_impl.impl(name, _permute_autograd)
-
-    for p in (prim_packet, prim):
-        p.__doc__ = (
-            "Returns a view of the original tensor input with its dimensions permuted."
-        )
-        p.impl_nvfuser = _nvfuser_impls["permute"]
-        p.return_type = torch._prims_common.RETURN_TYPE.NEW  # type: ignore[attr-defined]
 
 
 def register_var_mean():
@@ -453,7 +450,11 @@ def register_var_mean():
 
 def register_nvprims():
     """Registers all nvFuser primitives in the torch.ops.nvprims module."""
+
+    # register nvfuser composite ops
+    register_permute()
     register_var_mean()
+
     for name in nvprim_names:
         main_prim = getattr(torch.ops.prims, name)
 
