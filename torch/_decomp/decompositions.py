@@ -1745,9 +1745,12 @@ def is_same_size(a: Tensor, b: Tensor) -> bool:
     return a.shape == b.shape
 
 
+'''
+# Disable because of view stride error
 @register_decomposition(aten._reshape_alias)
 def _reshape_alias(x, shape, strides):
     return aten.view(x, shape)
+'''
 
 
 @register_decomposition(aten.nll_loss_forward)
