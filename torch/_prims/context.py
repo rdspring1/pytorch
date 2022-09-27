@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, Sequence, Union
 from warnings import warn
 
 import torch
+import os
 
 import torch._decomp
 import torch._prims
@@ -18,6 +19,8 @@ from torch._prims.nvfuser_executor import NvfuserPrimOperatorSupport
 from torch._prims_common import torch_function_passthrough
 from torch.fx.experimental.proxy_tensor import get_isolated_graphmodule
 
+skip_decompositions_str = os.environ.get("NVFUSER_SKIP_DECOMP", None)
+skip_decompositions = [getattr(torch.ops.aten, op.strip()) for op in skip_decompositions_str.split(",")]
 
 @functools.lru_cache(None)
 def torch_to_refs_map():
@@ -177,7 +180,7 @@ class TorchRefsMode(torch.overrides.TorchFunctionMode):
         # implementations.
         # There're other ways to implement this functionality,
         # see https://github.com/pytorch/pytorch/pull/82657#discussion_r939776417
-        if func is None and isinstance(orig_func, torch._ops.OpOverload):
+        if func is None and isinstance(orig_func, torch._ops.OpOverload) and not orig_func in skip_decompositions:
             func = torch._decomp.decomposition_table.get(orig_func, None)
 
         if func is not None:
