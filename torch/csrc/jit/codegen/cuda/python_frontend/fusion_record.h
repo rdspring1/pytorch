@@ -422,8 +422,8 @@ struct SqueezeOpRecord : RecordFunctor {
 
 //! Specialized Record Functor for the FusionDefinition's broadcast_in_dim op.
 
-struct BroadcastOpRecord : RecordFunctor {
-  BroadcastOpRecord(
+struct BroadcastInDimsOpRecord : RecordFunctor {
+  BroadcastInDimsOpRecord(
       std::vector<State> _args,
       std::vector<State> _outputs,
       std::string _name,
@@ -436,9 +436,9 @@ struct BroadcastOpRecord : RecordFunctor {
             RecordType::BroadcastOp),
         output_shape_(std::move(output_shape)),
         broadcast_dims_(std::move(broadcast_dims)) {}
-  virtual ~BroadcastOpRecord() = default;
+  virtual ~BroadcastInDimsOpRecord() = default;
   virtual RecordFunctor* clone() final {
-    return new BroadcastOpRecord(*this);
+    return new BroadcastInDimsOpRecord(*this);
   }
 
   //! Child specific hash function in lower 32 bits.
@@ -460,7 +460,7 @@ struct BroadcastOpRecord : RecordFunctor {
 
   virtual bool operator==(const RecordFunctor& other) const final {
     auto result = false;
-    if (auto child_ptr = dynamic_cast<const BroadcastOpRecord*>(&other)) {
+    if (auto child_ptr = dynamic_cast<const BroadcastInDimsOpRecord*>(&other)) {
       result = RecordFunctor::operator==(other);
       if (result) {
         result =
@@ -582,6 +582,193 @@ struct BroadcastOpRecord : RecordFunctor {
   //! For instance, for output [2, 3, 4] and input [3]. This vector would
   //! contain [1].
   std::vector<int64_t> broadcast_dims_;
+};
+
+struct BroadcastOpRecord : RecordFunctor {
+  BroadcastOpRecord(
+      std::vector<State> _args,
+      std::vector<State> _outputs,
+      std::string _name,
+      std::vector<bool>& is_broadcast_dim)
+      : RecordFunctor(
+            std::move(_args),
+            std::move(_outputs),
+            _name,
+            RecordType::BroadcastOp),
+        is_broadcast_dim_(std::move(is_broadcast_dim)) {}
+  virtual ~BroadcastOpRecord() = default;
+  virtual RecordFunctor* clone() final {
+    return new BroadcastOpRecord(*this);
+  }
+
+  //! Child specific hash function in lower 32 bits.
+  virtual size_t hash() const final {
+    auto result = RecordFunctor::hash();
+    size_t hash = 0;
+    for (const auto idx : c10::irange(is_broadcast_dim_.size())) {
+        if (is_broadcast_dim_.at(idx)) {
+            hash ^= static_cast<size_t>(idx);
+        }
+    }
+    return result | hash;
+  }
+
+  virtual bool operator==(const RecordFunctor& other) const final {
+    auto result = false;
+    if (auto child_ptr = dynamic_cast<const BroadcastOpRecord*>(&other)) {
+      result = RecordFunctor::operator==(other);
+      if (result) {
+        result =
+             (is_broadcast_dim_.size() == child_ptr->is_broadcast_dim_.size());
+        if (result) {
+          for (size_t i = 0; i < is_broadcast_dim_.size(); ++i) {
+            if (is_broadcast_dim_[i] != child_ptr->is_broadcast_dim_[i]) {
+              result = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  virtual void operator()(FusionDefinition& fd) final {
+    auto arg =
+        fd.getFusionState(args_.at(0).index)->template as<Nvf::TensorView>();
+
+    const auto& arg_domains_nr = arg->domain()->noReductions();
+    const auto arg_ndims = arg_domains_nr.size();
+    TORCH_CHECK(
+        arg_ndims == is_broadcast_dim_.size(),
+        "The broadcast dimensions should match the input dimensions.",
+        arg_ndims,
+        is_broadcast_dim_.size());
+
+    auto output = Nvf::broadcast(arg, is_broadcast_dim_);
+    fd.setFusionState(outputs_.at(0).index, output);
+  }
+
+  virtual void print(std::ostream& os, bool close_function = true) const {
+    RecordFunctor::print(os, false);
+    os << ", is_broadcast_dim=[";
+    bool first_arg = true;
+    for (auto value : is_broadcast_dim_) {
+      if (first_arg) {
+        first_arg = false;
+      } else {
+        os << ", ";
+      }
+      os << value;
+    }
+    os << "]";
+    if (close_function) {
+      os << ")";
+    }
+  }
+
+ private:
+  //! Represents if a new broadcast dimension will be added to the output tensor
+  std::vector<bool> is_broadcast_dim_;
+};
+
+struct ExpandOpRecord : RecordFunctor {
+  ExpandOpRecord(
+      std::vector<State> _args,
+      std::vector<State> _outputs,
+      std::string _name,
+      std::vector<int64_t>& output_shape)
+      : RecordFunctor(
+            std::move(_args),
+            std::move(_outputs),
+            _name,
+            RecordType::BroadcastOp),
+        output_shape_(std::move(output_shape)) {}
+  virtual ~ExpandOpRecord() = default;
+  virtual RecordFunctor* clone() final {
+    return new ExpandOpRecord(*this);
+  }
+
+  //! Child specific hash function in lower 32 bits.
+  virtual size_t hash() const final {
+    auto result = RecordFunctor::hash();
+    size_t output_shape_hash = 0;
+    for (auto shape : output_shape_) {
+      output_shape_hash ^= static_cast<size_t>(shape);
+    }
+    return result | output_shape_hash;
+  }
+
+  virtual bool operator==(const RecordFunctor& other) const final {
+    auto result = false;
+    if (auto child_ptr = dynamic_cast<const ExpandOpRecord*>(&other)) {
+      result = RecordFunctor::operator==(other);
+      if (result) {
+        result =
+            (output_shape_.size() == child_ptr->output_shape_.size());
+        if (result) {
+          for (size_t i = 0; i < output_shape_.size(); ++i) {
+            if (output_shape_[i] != child_ptr->output_shape_[i]) {
+              result = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  virtual void operator()(FusionDefinition& fd) final {
+    auto arg =
+        fd.getFusionState(args_.at(0).index)->template as<Nvf::TensorView>();
+
+    const auto& arg_domains_nr = arg->domain()->noReductions();
+    const auto arg_ndims = arg_domains_nr.size();
+    TORCH_CHECK(
+        output_shape_.size() >= arg_ndims,
+        "The new shape is expected to be greater-then-or-equal to the input",
+        output_shape_.size(),
+        arg_ndims);
+
+    std::vector<torch::jit::fuser::cuda::Val*> expanded_shape(
+        output_shape_.size(), nullptr);
+    for (const auto idx : c10::irange(output_shape_.size())) {
+      if (arg_domains_nr[idx]->isBroadcast() && (output_shape_[idx] != 1)) {
+        // TODO: this would be tricky to handle on dynamic shapes, we'll
+        // need to pass-in a symbol instead somehow.
+        expanded_shape[idx] =
+            Nvf::IrBuilder::create<Nvf::Int>(output_shape_[idx]);
+      } else {
+        expanded_shape[idx] = Nvf::IrBuilder::create<Nvf::Int>(-1);
+      }
+    }
+
+    auto output = Nvf::expand(arg, expanded_shape);
+    fd.setFusionState(outputs_.at(0).index, output);
+  }
+
+  virtual void print(std::ostream& os, bool close_function = true) const {
+    RecordFunctor::print(os, false);
+    os << ", output_shape=[";
+    bool first_arg = true;
+    for (auto shape : output_shape_) {
+      if (first_arg) {
+        first_arg = false;
+      } else {
+        os << ", ";
+      }
+      os << shape;
+    }
+    os << "]";
+    if (close_function) {
+      os << ")";
+    }
+  }
+
+ private:
+  //! Represents the tensor dimensions of the output tensor.
+  std::vector<int64_t> output_shape_;
 };
 
 template <class OutType, class ArgType>

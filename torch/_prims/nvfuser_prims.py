@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from torch._prims_common import (
+    check,
     DimsSequenceType,
     ELEMENTWISE_TYPE_PROMOTION_KIND,
     getnvFuserDtype,
@@ -239,7 +240,43 @@ def _broadcast_in_dim_nvfuser(
     shape: ShapeType,
     broadcast_dimensions: ShapeType,
 ):
-    return fd.ops.broadcast_in_dim(a, shape, broadcast_dimensions)  # type: ignore[attr-defined]
+    check(
+        len(shape) >= a.ndim,
+        lambda: f"The new shape [{len(shape)}] is expected to be greater-then-or-equal to the input dimensions [{a.ndim}].",
+    )
+
+    check(
+        a.ndim == len(broadcast_dimensions),
+        lambda: f"The broadcast dimensions [{len(broadcast_dimensions)}] should match the input dimensions [{a.ndim}].",
+    )
+
+    is_broadcast_dim = [True] * len(shape)
+    is_expand_dim = [True] * len(shape)
+    for idx in range(len(broadcast_dimensions)):
+        if idx > 0:
+            check(
+                broadcast_dimensions[idx - 1] < broadcast_dimensions[idx],
+                lambda: "Broadcast dimension is not greater than the previous value.",
+            )
+        check(
+            broadcast_dimensions[idx] < len(shape),
+            lambda: "Invalid broadcast_dimensions value.",
+        )
+
+        is_broadcast_dim[broadcast_dimensions[idx]] = False
+        is_expand_dim[broadcast_dimensions[idx]] = a.shape[idx] == 1
+
+    expand_shape = [-1] * len(shape)
+    has_expand = False
+    for idx in range(len(shape)):
+        if is_expand_dim[idx] and (shape[idx] != 1) and (shape[idx] != -1):
+            expand_shape[idx] = shape[idx]
+            has_expand = True
+
+    output = fd.ops.broadcast(a, is_broadcast_dim)
+    if has_expand:
+        output = fd.ops.expand(output, expand_shape)
+    return output  # type: ignore[attr-defined]
 
 
 def _convert_element_type_nvfuser(fd: Any, a: TensorLikeType, dtype: torch.dtype):
