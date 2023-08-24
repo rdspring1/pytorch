@@ -1,7 +1,6 @@
 # Owner(s): ["module: nvfuser"]
 
 import torch
-from torch.testing._internal.common_utils import set_default_dtype
 
 try:
     from _nvfuser.test_torchscript import *  # noqa: F403,F401
