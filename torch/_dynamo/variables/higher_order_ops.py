@@ -21,7 +21,7 @@ from ..exc import (
     UserErrorType,
 )
 from ..guards import GuardBuilder
-from ..source import FSDPNNModuleSource, GetItemSource, NNModuleSource
+from ..source import FSDPNNModuleSource, GetItemSource, LocalSource, NNModuleSource
 from ..utils import proxy_args_kwargs
 from .lists import ListVariable, TupleVariable
 from .nn_module import NNModuleVariable
@@ -88,8 +88,13 @@ def validate_args_and_maybe_create_graph_inputs(
             if manually_set_subgraph_inputs:
                 new_proxy = tracer.create_graph_input(a.as_proxy().node.name)
                 example_value = a.as_proxy().node.meta["example_value"]
+                options = VariableTracker.propagate(a)
+                options["source"] = LocalSource(a.as_proxy().node.name)
                 new_arg = wrap_fx_proxy(
-                    tx=tx, proxy=new_proxy, example_value=example_value
+                    tx=tx,
+                    proxy=new_proxy,
+                    example_value=example_value,
+                    **options,
                 )
             else:
                 new_arg = a
